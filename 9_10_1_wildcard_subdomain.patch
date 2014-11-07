@@ -1,0 +1,81 @@
+--- lib/dns/sdlz.c	2014-09-17 03:27:15.000000000 +0800
++++ lib/dns/sdlz.c.new	2014-11-06 18:32:05.362253390 +0800
+@@ -545,7 +545,8 @@
+ 	dns_sdlznode_t *node = NULL;
+ 	isc_result_t result;
+ 	isc_buffer_t b;
+-	char namestr[DNS_NAME_MAXTEXT + 1];
++	//char namestr[DNS_NAME_MAXTEXT + 1];
++	char namestr[DNS_NAME_MAXTEXT + 3];
+ 	isc_buffer_t b2;
+ 	char zonestr[DNS_NAME_MAXTEXT + 1];
+ 	isc_boolean_t isorigin;
+@@ -605,12 +606,68 @@
+ 	 * if the host (namestr) was not found, try to lookup a
+ 	 * "wildcard" host.
+ 	 */
++	/* comment by mahongzhan
+ 	if (result == ISC_R_NOTFOUND && !create)
+ 		result = sdlz->dlzimp->methods->lookup(zonestr, "*",
+ 						       sdlz->dlzimp->driverarg,
+ 						       sdlz->dbdata, node,
+ 						       methods, clientinfo);
+ 
++	*/
++
++	//////////////////////////////////////////
++	// MODIFY START 20141106
++	// if the host (namestr) was not found, and there are multiple labels, try finding
++	// a best-fit wildcard
++	if((result == ISC_R_NOTFOUND && !create) && 
++	    ((dns_name_countlabels(name) > (dns_name_countlabels(&db->origin)+1)))) {
++
++		unsigned int i;
++		unsigned int labels, endlabel;
++
++		if ((sdlz->dlzimp->flags & DNS_SDLZFLAG_RELATIVEOWNER) != 0) {
++			labels = dns_name_countlabels(name) - dns_name_countlabels(&db->origin);
++			endlabel = labels;
++		} else {
++			labels = dns_name_countlabels(name);
++			endlabel = dns_name_countlabels(name) - dns_name_countlabels(&db->origin);
++		}
++
++		for(i = (endlabel > 5) ? (endlabel - 5) : 1;
++			(i < endlabel) && (result != ISC_R_SUCCESS);
++			i++)
++		{
++			dns_name_t tname;
++
++			dns_name_init(&tname, NULL);
++			dns_name_getlabelsequence(name, i, labels - i, &tname);
++			isc_buffer_init(&b, namestr, sizeof(namestr));
++			isc_buffer_putstr(&b,"*.");
++			result = dns_name_totext(&tname, ISC_TRUE, &b);
++			if (result != ISC_R_SUCCESS) {
++				MAYBE_UNLOCK(sdlz->dlzimp);
++				destroynode(node);
++				return (result);
++			}
++			isc_buffer_putuint8(&b, 0);
++			result = sdlz->dlzimp->methods->lookup(zonestr,
++							       namestr,
++							       sdlz->dlzimp->driverarg,
++							       sdlz->dbdata, node,
++							       methods, clientinfo);
++		}
++	}
++	// if the host (namestr) was not found, try to lookup the default "wildcard" host
++	if(result == ISC_R_NOTFOUND && !create) {
++		result = sdlz->dlzimp->methods->lookup(zonestr, "*",
++						       sdlz->dlzimp->driverarg,
++                                                       sdlz->dbdata, node,
++						       methods, clientinfo);
++	}
++
++	// MODIFY END
++	/////////////////////////////////////////
++
+ 	MAYBE_UNLOCK(sdlz->dlzimp);
+ 
+ 	if (result == ISC_R_NOTFOUND && (isorigin || create))
